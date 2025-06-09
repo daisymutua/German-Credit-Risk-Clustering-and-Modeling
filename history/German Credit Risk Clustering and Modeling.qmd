@@ -1,0 +1,860 @@
+---
+title: "German Credit Risk Clustering and Modeling"
+author: "Alain Kalonji and Daisy Mutua"
+date: today
+format:
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-depth: 3
+    toc-location: body
+    theme: superhero
+    code-fold: true
+    code-summary: "Click to expand R code"
+    embed-resources: true
+  pdf: default
+execute:
+  echo: fenced
+  warning: false
+  cache: true
+  freeze: auto
+code-annotations: below
+title-block-banner: true
+number-sections: true
+number-depth: 3
+---
+
+# German Credit Risk Clustering and Modeling
+
+```{r, message=FALSE}
+#load packages
+library(ggplot2)
+library(xgboost)
+library(dplyr)
+library(knitr)
+library(tidyr)
+library(tidyverse)
+library(gridExtra)
+library(tibble)
+library(caret)
+library(patchwork)
+library(GGally)
+```
+
+# OVERVIEW
+
+type here
+
+```{r, message=FALSE}
+options(warn = -1)
+# Charger le fichier CSV dans un dataframe
+library(readr)
+df <- read_csv("german_credit_data.csv")
+```
+
+# EDA
+
+```{r}
+
+show_info <- function(data) {
+  # Display the shape of the dataset
+  cat("DATASET SHAPE:", dim(data), "\n")
+  cat(rep("-", 50), "\n")
+  
+  # Display data types
+  cat("FEATURE DATA TYPES:\n")
+  print(str(data))
+  cat("\n", rep("-", 50), "\n")
+  
+  # Number of unique values per feature
+  cat("NUMBER OF UNIQUE VALUES PER FEATURE:\n")
+  print(sapply(data, function(x) length(unique(x))))
+  cat("\n", rep("-", 50), "\n")
+  
+  # Number of missing values per feature
+  cat("NULL VALUES PER FEATURE:\n")
+  print(colSums(is.na(data)))
+}
+
+show_info(df)
+```
+
+## UNIVARIATE ANALYSIS
+
+### DISTRIBUTION PLOTS
+
+```{r, warning=FALSE}
+p1 <- ggplot(df, aes(x = `Credit amount`)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "steelblue",
+                 alpha = 0.6) +
+  geom_density(color = "steelblue", size = 1.2) +
+  theme_minimal()
+
+p2 <- ggplot(df, aes(x = Duration)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "salmon",
+                 alpha = 0.6) +
+  geom_density(color = "salmon", size = 1.2) +
+  theme_minimal()
+
+p3 <- ggplot(df, aes(x = Age)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "darkviolet",
+                 alpha = 0.6) +
+  geom_density(color = "darkviolet", size = 1.2) +
+  theme_minimal()
+
+(p1 | p2 | p3) +
+  plot_annotation(
+    title = "DISTRIBUTION PLOTS",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 16))
+  )
+```
+
+## HORIZONTAL BOX PLOTS without y-axis titles
+
+### Boxplot 1 : Credit amount
+
+```{r}
+df$var <- "1"
+
+b1 <- ggplot(df, aes(x = var, y = `Credit amount`)) +
+  geom_boxplot(fill = "steelblue") +
+  theme_minimal() +
+  labs(x = "Credit amount", y = NULL) +
+  theme(
+    axis.title.x = element_text(hjust = 0.5, vjust = -1),  
+    axis.text.x = element_blank(),       
+    axis.ticks.x = element_blank()       
+  ) +
+  coord_flip()
+
+# Boxplot 2 : Duration
+
+b2 <- ggplot(df, aes(x = var, y = Duration)) +
+  geom_boxplot(fill = "salmon") +
+  theme_minimal() +
+  labs(x = "Duration", y = NULL) +
+  theme(
+    axis.title.x = element_text(hjust = 0.5, vjust = -1),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  coord_flip()
+
+# Boxplot 3 : Age
+b3 <- ggplot(df, aes(x = var, y = Age)) +
+  geom_boxplot(fill = "darkviolet") +
+  theme_minimal() +
+  labs(x = "Age", y = NULL) +
+  theme(
+    axis.title.x = element_text(hjust = 0.5, vjust = -1),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  coord_flip()
+
+# Affichage des boxplots c??te ?? c??te avec un titre g??n??ral
+grid.arrange(b1, b2, b3, ncol = 3, top = "BOX PLOTS")
+```
+
+### COUNTPLOTS (SEX & RISK FACTOR)
+
+```{r}
+df$Sex <- factor(df$Sex, levels = c("male", "female"))  
+df$Risk <- factor(df$Risk, levels = c("good", "bad"))   
+
+sex_colors <- c("male" = "#8E24AA",    
+                "female" = "#C2185B")  
+
+risk_colors <- c("bad"  = "#EF6C00",   
+                 "good" = "#F06292")   
+
+# Barplot Sex
+p1 <- ggplot(df, aes(x = Sex, fill = Sex)) +
+  geom_bar() +
+  scale_fill_manual(values = sex_colors) +
+  theme_minimal() +
+  labs(title = "Count Plot: Sex", x = "Sex", y = "Count") +
+  theme(legend.position = "none")
+
+# Barplot Risk
+p2 <- ggplot(df, aes(x = Risk, fill = Risk)) +
+  geom_bar() +
+  scale_fill_manual(values = risk_colors) +
+  theme_minimal() +
+  labs(title = "Count Plot: Risk", x = "Risk", y = "Count") +
+  theme(legend.position = "none")
+
+#Display side by side
+grid.arrange(p1, p2, ncol = 2)
+```
+
+```{r}
+library(psych)
+
+kable(describe(df[, c("Age", "Duration", "Credit amount")]))
+```
+
+## BIVARIATE ANALYSIS
+
+```{r, warning=FALSE}
+
+library(grid)
+
+main_title <- "BIVARIATE ANALYSIS (HUE=SEX)"
+
+p1 <- ggplot(df, aes(x = Age, y = `Credit amount`, color = Sex)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80",
+              alpha = 0.4, span = 1) +  
+  theme_minimal() +
+  ggtitle("Age vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(df, aes(x = Duration, y = `Credit amount`, color = Sex)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80",
+              alpha = 0.4, span = 1) +  
+  theme_minimal() +
+  ggtitle("Duration vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- ggplot(df, aes(x = Age, y = Duration, color = Sex)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.4, span = 1) +  
+  theme_minimal() +
+  ggtitle("Age vs Duration") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(
+  p1, p2, p3,
+  ncol = 1,
+  top = textGrob(main_title, gp = gpar(fontsize = 20, fontface = "bold")))
+```
+
+```{r, warning=FALSE}
+
+library(RColorBrewer)
+
+main_title <- "BIVARIATE ANALYSIS (HUE=RISK)"
+
+palette_deep <- brewer.pal(n = length(unique(df$Risk)), name = "Dark2")
+
+p1 <- ggplot(df, aes(x = Age, y = `Credit amount`, color = Risk)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.3) +  
+  scale_color_manual(values = palette_deep) +
+  theme_minimal() +
+  ggtitle("Age vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(df, aes(x = Duration, y = `Credit amount`, color = Risk)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.3) +  
+  scale_color_manual(values = palette_deep) +
+  theme_minimal() +
+  ggtitle("Duration vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- ggplot(df, aes(x = Age, y = Duration, color = Risk)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.3) +  
+  scale_color_manual(values = palette_deep) +
+  theme_minimal() +
+  ggtitle("Age vs Duration") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(
+  p1, p2, p3,
+  ncol = 1,
+  top = textGrob(main_title, gp = gpar(fontsize = 20, fontface = "bold")))
+```
+
+### PAIRPLOT TO VISUALIZE FEATURES WITH LINEAR RELATIONSHIP
+
+```{r}
+# Select only the columns of interest
+df_subset <- df[, c("Job", "Duration", "Credit amount", "Age")]
+
+ggpairs(df_subset,
+        diag = list(continuous = "barDiag"),   
+        upper = list(continuous = "points"),   
+        lower = list(continuous = "points")    
+) +
+  ggtitle("Histograms on Diagonal and Scatterplots Off-Diagonal
+          for Selected Variables") +
+  theme_minimal()
+```
+
+### SAVING ACCOUNT ANALYSIS
+
+```{r, warning=FALSE}
+# Graphique 1 : Count plot 'Saving accounts' par 'Risk'
+p1 <- ggplot(df, aes(x = `Saving accounts`, fill = Risk)) +
+  geom_bar(position = "dodge") +
+  scale_fill_brewer(palette = "Greens") +
+  ggtitle("Count Plot: Saving accounts by Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique 2 : Boxenplot 'Credit amount' par 'Saving accounts' et 'Risk'
+p2 <- ggplot(df, aes(x = `Saving accounts`, y = `Credit amount`,
+                     fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8)) +
+  scale_fill_brewer(palette = "Greens") +
+  ggtitle("Boxenplot: Credit amount by Saving accounts and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique 3 : Violin plot 'Job' par 'Saving accounts' et 'Risk'
+p3 <- ggplot(df, aes(x = `Saving accounts`, y = factor(Job), fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8), scale = "area") +
+  scale_fill_brewer(palette = "Greens") +
+  ggtitle("Violin Plot: Job by Saving accounts and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Affichage des 3 graphiques en colonne
+grid.arrange(p1, p2, p3, ncol = 1, heights = c(1, 1, 1))
+```
+
+### SHOW BASIC STATS PER SAVING ACCOUNT
+
+```{r}
+
+# Apply summary to each group and each relevant variable
+
+summary_by_saving <- df %>%
+  group_by(`Saving accounts`) %>%
+  summarise(across(c(Duration, Job, `Credit amount`), list(
+    Min = ~min(., na.rm = TRUE),
+    Q1 = ~quantile(., 0.25, na.rm = TRUE),
+    Median = ~median(., na.rm = TRUE),
+    Mean = ~mean(., na.rm = TRUE),
+    Q3 = ~quantile(., 0.75, na.rm = TRUE),
+    Max = ~max(., na.rm = TRUE),
+    SD = ~sd(., na.rm = TRUE)
+  ), .names = "{.col}_{.fn}"))
+
+```
+
+```{r}
+summary_transposed <- summary_by_saving %>%
+  pivot_longer(-`Saving accounts`, names_to = "Measure", 
+               values_to = "Value") %>%
+  pivot_wider(names_from = `Saving accounts`, values_from = Value)
+
+kable(print(summary_transposed))
+```
+
+### ANALYSIS BY CREDIT CARD PURPOSE
+
+```{r}
+# Count plot
+p1 <- ggplot(df, aes(x = `Purpose`, fill = Risk)) +
+  geom_bar(position = "dodge") +
+  scale_fill_brewer(palette = "Pastel1") +  # Proche du "muted" de seaborn
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  ggtitle("Count Plot: Purpose by Risk")
+
+
+p2 <- ggplot(df, aes(x = `Purpose`, y = `Credit amount`, fill = Risk)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  ggtitle("Box Plot: Credit Amount by Purpose and Risk")
+
+# Violin plot
+p3 <- ggplot(df, aes(x = `Purpose`, y = Job, fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8), trim = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  ggtitle("Violin Plot: Job by Purpose and Risk")
+
+
+(p1 / p2 / p3) + plot_layout(heights = c(1, 1, 1)) & 
+  plot_annotation(title = "Visualizations Grouped by Purpose (Hue = Risk)",
+                  theme = theme(plot.title = element_text(hjust = 0.5,
+                                                          size = 16)))
+```
+
+### PER HOUSING
+
+```{r, warning=FALSE}
+
+library(ggdist)
+
+
+custom_colors <- c("Bad" = "#8A2BE2",  # mauve (blueviolet)
+                   "Good" = "#C71585") # vin rose (mediumvioletred)
+
+# Count plot : Housing vs Risk
+p1 <- ggplot(df, aes(x = Housing, fill = Risk)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = custom_colors) +
+  ggtitle("Count Plot: Housing by Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Boxenplot (approxim??)
+p2 <- ggplot(df, aes(x = Housing, y = `Credit amount`, fill = Risk)) +
+  stat_halfeye(
+    adjust = 0.5,
+    width = 0.6,
+    .width = 0,
+    justification = -0.2,
+    point_colour = NA,
+    position = position_dodge(width = 0.8)
+  ) +
+  geom_boxplot(
+    width = 0.2,
+    outlier.shape = NA,
+    position = position_dodge(width = 0.8)
+  ) +
+  scale_fill_manual(values = custom_colors) +
+  ggtitle("Boxenplot: Credit amount by Housing and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Violin plot : Housing vs Job (Hue = Risk)
+p3 <- ggplot(df, aes(x = Housing, y = Job, fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8)) +
+  scale_fill_manual(values = custom_colors) +
+  ggtitle("Violin Plot: Job by Housing and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Combination of the 3 plots
+
+(p1 / p2 / p3) + 
+  plot_layout(heights = c(1, 1, 1)) + 
+  plot_annotation(title = "Grouped Visualizations by Housing (Hue = Risk)",
+                  theme = theme(plot.title = element_text(hjust = 0.5, 
+                                                          size = 16)))
+```
+
+# DATA PROCESSING
+
+## Normalize numeric features
+
+```{r}
+library(scales)
+
+# Replace NA values with "unknown"
+df[is.na(df)] <- "unknown"
+
+# Check for NA values
+kable(colSums(is.na(df)))
+```
+
+```{r}
+# Drop the '...1' column
+df <- df %>% select(-`...1`)
+```
+
+```{r}
+# Define categorical features
+categorical_features <- c('Sex', 'Job', 'Housing', 'Saving accounts', 
+                          'Checking account', 'Purpose', 'Risk')
+
+# Label encode the categorical features
+df[categorical_features] <- lapply(df[categorical_features], 
+                                   function(x) as.numeric(factor(x)))
+
+# Show head of new dataframe
+kable(head(df))
+```
+
+```{r}
+
+# LOG TRANSFORMATION OF NUMERIC FEATURES
+num_df <- df %>% select(Age, Duration, `Credit amount`)
+num_df_log <- log(num_df)
+
+# Plot distributions after log transformation
+par(mfrow = c(1, 3))
+
+# Credit amount
+hist(num_df_log$`Credit amount`, breaks = 40, main = "Credit Amount", 
+     col = "skyblue", xlab = "", border = "white", probability = TRUE)
+lines(density(num_df_log$`Credit amount`), col = "blue", lwd = 2)
+
+# Duration
+hist(num_df_log$Duration, breaks = 40, main = "Duration", 
+     col = "salmon", xlab = "", border = "white", probability = TRUE)
+lines(density(num_df_log$Duration), col = "red", lwd = 2)
+
+# Age
+hist(num_df_log$Age, breaks = 40, main = "Age", 
+     col = "darkviolet", xlab = "", border = "white", probability = TRUE)
+lines(density(num_df_log$Age), col = "black", lwd = 2)
+
+```
+
+```{r}
+# STANDARDISE THE NUMERIC FEATURES
+preProc <- preProcess(num_df_log, method = c("center", "scale"))
+num_df_scaled <- predict(preProc, num_df_log)
+
+# Show dimensions and values
+num_df_scaled <- as.data.frame(num_df_scaled)
+num_df_scaled <- data.frame(lapply(num_df_scaled, as.numeric))
+
+dim(num_df_scaled)
+
+```
+
+```{r}
+kable(head(num_df_scaled))
+```
+
+# CLUSTERING
+
+```{r}
+##CLUSTERING
+
+#K-MEANS
+#APPLYING ELBOW METHOD TO FIND THE BEST NUMBER OF CLUSTERS
+
+inertias <- numeric()
+
+for (i in 2:15) {
+  set.seed(0)
+  kmeans_result <- kmeans(num_df_scaled, centers = i, nstart = 25)
+  inertias[i - 1] <- kmeans_result$tot.withinss
+}
+
+df_elbow <- data.frame(
+  k = 2:15,
+  inertia = inertias
+)
+
+ggplot(df_elbow, aes(x = k, y = inertia)) +
+  geom_line(color = "steelblue", size = 1.2) +
+  geom_point(color = "steelblue", size = 3) +
+  ggtitle("ELBOW METHOD") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(breaks = 2:15)
+```
+
+```{r, warning=FALSE}
+library(cluster)
+
+#ALTERNATIVE METHOD: SILHOUTE SCORE WITH RANDOM SAMPLING
+
+# Supposons que num_df_scaled est votre dataframe/matrice normalis??e
+
+results <- data.frame(num_cluster = integer(),
+                      seed = integer(),
+                      sil_score = numeric())
+
+# Boucle pour k de 2 ?? 15 et seed de 0 ?? 19
+for (i in 2:15) {
+  for (r in 0:19) {
+    set.seed(r)
+    kmeans_result <- kmeans(num_df_scaled, centers = i, nstart = 25)
+    c_labels <- kmeans_result$cluster
+    sil <- silhouette(c_labels, dist(num_df_scaled))
+    sil_ave <- mean(sil[, 3])
+    results <- rbind(results, data.frame(num_cluster = i, seed = r,
+                                         sil_score = sil_ave))
+  }
+}
+```
+
+```{r}
+
+library(viridis)
+library(pheatmap)
+
+
+pivot_kmeans <- reshape2::dcast(results, num_cluster ~ seed, 
+                                value.var = "sil_score")
+rownames(pivot_kmeans) <- pivot_kmeans$num_cluster
+pivot_kmeans$num_cluster <- NULL
+
+
+mat <- as.matrix(pivot_kmeans)
+
+
+magma_palette <- viridis(100, option = "magma")
+
+# Affichage heatmap avec pheatmap
+pheatmap(mat,
+         color = magma_palette,
+         display_numbers = TRUE,
+         number_format = "%.3f",
+         fontsize_number = 8,
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         main = "Silhouette Scores Heatmap (num_cluster vs seed)",
+         border_color = "grey")
+
+# The scores of 2,3,4 and 5 are pretty stable, Let's pick a number 
+# of cluster from that range.
+```
+
+```{r, message=FALSE}
+# to plot the 3d 
+
+library(rgl)
+```
+
+```{r}
+
+#AT 3 NUMBER OF CLUSTERS
+set.seed(0)
+km <- kmeans(num_df_scaled, centers = 3, nstart = 25)
+clusters <- km$cluster
+
+# plot 3D avec rgl
+plot3d(num_df_scaled[,1], num_df_scaled[,2], num_df_scaled[,3],
+       col = clusters,
+       size = 5,
+       type = "s",
+       xlab = colnames(num_df_scaled)[1],
+       ylab = colnames(num_df_scaled)[2],
+       zlab = colnames(num_df_scaled)[3],
+       main = "3D Scatter Plot of KMeans Clusters")
+
+rglwidget()
+```
+
+```{r}
+# Assurez-vous que clusters est un facteur
+df$clusters <- factor(clusters)
+
+# Palette cividis (via viridis)
+cividis_pal <- viridis::viridis(n = length(levels(df$clusters)), option = "C")
+
+p1 <- ggplot(df, aes(x = Duration, y = `Credit amount`, color = clusters)) +
+  geom_point() +
+  scale_color_manual(values = cividis_pal) +
+  theme_minimal() +
+  ggtitle("Duration vs Credit amount")
+
+p2 <- ggplot(df, aes(x = Age, y = `Credit amount`, color = clusters)) +
+  geom_point() +
+  scale_color_manual(values = cividis_pal) +
+  theme_minimal() +
+  ggtitle("Age vs Credit amount")
+
+p3 <- ggplot(df, aes(x = Age, y = Duration, color = clusters)) +
+  geom_point() +
+  scale_color_manual(values = cividis_pal) +
+  theme_minimal() +
+  ggtitle("Age vs Duration")
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+```{r, warning=FALSE}
+# LET'S CREATE A DATAFRAME TO SUMMARIZE THE RESULT
+
+# Cr??er un nouveau dataframe avec les colonnes d??int??r
+# ??t et la variable cluster
+df_clustered <- df %>%
+  select(Age, Duration, `Credit amount`) %>%
+  mutate(cluster = factor(clusters))
+
+```
+
+```{r}
+# Calculer la moyenne par cluster
+df_clustered_summary <- df_clustered %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+kable(print(df_clustered_summary))
+```
+
+# PREDICTIVE MODELLING -XGBOOST
+
+```{r}
+library(xgboost)
+library(caret)
+
+# Combine numeric and categorical data
+num_df_scaled <- as.data.frame(num_df_scaled)
+colnames(num_df_scaled) <- c("Age", "Duration", "Credit_amount")  
+cat_df <- df %>% select(all_of(categorical_features))  
+
+data <- bind_cols(cat_df, num_df_scaled)
+data$Risk <- df$Risk  # Add target variable
+# Display first few rows
+kable(head(data))
+```
+
+```{r}
+
+# Split data into features (x) and target (y)
+x <- data[, !grepl("Risk", names(data))]
+y <- data$Risk
+
+# Perform train-test split
+set.seed(101)  # Equivalent to random_state
+split_index <- sample(nrow(data), nrow(data)*0.2)
+x_test <- x[split_index, ]
+x_train <- x[-split_index, ]
+y_test <- y[split_index]
+y_train <- y[-split_index]
+
+# Print dimensions
+print(paste('xtrain shape: ', dim(x_train)[1], 'rows,', dim(x_train)[2], 'columns'))
+print(paste('xtest shape: ', dim(x_test)[1], 'rows,', dim(x_test)[2], 'columns'))
+print(paste('ytrain shape: ', length(y_train)))
+print(paste('ytest shape: ', length(y_test)))
+```
+
+## Hyper Parameter Tuning
+
+```{r, message=FALSE}
+##### Convert target to factor if it's categorical
+y_train <- as.factor(y_train)
+levels(y_train)
+# Automatically make them valid R names
+levels(y_train) <- make.names(levels(y_train))
+```
+
+```{r}
+# Combine x and y for caret
+train_data <- cbind(x_train, Risk = y_train)
+
+# Generate random hyperparameter grid (25 samples like Python's n_iter=25)
+set.seed(123)
+xgb_random_grid <- data.frame(
+  nrounds = sample(50:300, 25, replace = TRUE),  
+  max_depth = sample(1:50, 25, replace = TRUE),
+  eta = runif(25, 0, 2),                         
+  gamma = runif(25, 0, 1),            
+  colsample_bytree = runif(25, 0.5, 1),
+  min_child_weight = sample(1:10, 25, replace = TRUE),
+  subsample = runif(25, 0.5, 1)
+)
+
+# Define trainControl with cross-validation
+control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = FALSE,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  allowParallel = TRUE
+)
+
+# Train XGBoost model using random search
+set.seed(123)
+xgb_model <- train(
+  Risk ~ .,
+  data = train_data,
+  method = "xgbTree",
+  metric = "ROC",
+  tuneGrid = xgb_random_grid,
+  trControl = control
+)
+```
+
+## Plotting ROC Curve
+
+```{r, message=FALSE}
+#| label: factor
+y <- as.factor(y)
+levels(y)  # Should be length 2, e.g., "bad" and "good"
+
+```
+
+```{r}
+xgb_model_func <- function(x_train, y_train) {
+  dtrain <- xgboost::xgb.DMatrix(data = as.matrix(x_train), label = as.numeric(y_train) - 1)
+  
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "auc"
+  )
+  
+  model <- xgboost::xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = 100,
+    verbose = 0
+  )
+  
+  return(model)
+}
+
+```
+
+```{r}
+#| label: roc
+plot_roc_cv <- function(x, y, model_func, n_splits = 10) {
+  set.seed(123)
+  folds <- caret::createFolds(y, k = n_splits, list = TRUE, 
+                              returnTrain = FALSE)
+  
+  all_roc_data <- list()
+  
+  for (i in seq_along(folds)) {
+    test_idx <- folds[[i]]
+    train_idx <- setdiff(seq_along(y), test_idx)
+    
+    test_y <- y[test_idx]
+    
+    # Skip fold if only one class is present in y
+    if (length(unique(test_y)) < 2) {
+      message(sprintf("Skipping Fold %d: Only one class present in test set.", i))
+      next
+    }
+    
+    model <- model_func(x[train_idx, ], y[train_idx])
+    
+    dtest <- xgboost::xgb.DMatrix(data = as.matrix(x[test_idx, ]))
+    prob_pred <- predict(model, dtest)
+    
+    # Force levels to match full dataset 
+    roc_obj <- pROC::roc(response = test_y,
+                         predictor = prob_pred,
+                         levels = levels(y),  
+                         direction = "<")     
+    
+    fold_auc <- as.numeric(pROC::auc(roc_obj))
+    n_points <- length(roc_obj$sensitivities)
+    
+    df <- data.frame(
+      fpr = 1 - roc_obj$specificities,
+      tpr = roc_obj$sensitivities,
+      fold = paste("Fold", i),
+      auc = rep(fold_auc, n_points)
+    )
+    
+    all_roc_data[[i]] <- df
+  }
+  
+  
+  
+  roc_df <- dplyr::bind_rows(all_roc_data)
+  mean_auc <- mean(sapply(all_roc_data, function(df) unique(df$auc)))
+  
+  ggplot(roc_df, aes(x = fpr, y = tpr, color = fold)) +
+    geom_line(alpha = 0.6, size = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", 
+                color = "black") +
+    labs(
+      title = sprintf("10-Fold ROC Curve (Mean AUC = %.2f)", mean_auc),
+      x = "False Positive Rate",
+      y = "True Positive Rate",
+      color = "Fold"
+    ) +
+    theme_minimal()
+}
+
+plot_roc_cv(x, y, xgb_model_func, n_splits = 10)
+```
+
+# Conclusion
