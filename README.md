@@ -53,3 +53,7 @@ install.packages("dplyr")
 
 - Daisy Mutua
 - Alain Kalonji
+
+> Note: Parts of this project were developed with assistance from AI tools, specifically ChatGPT by OpenAI. All outputs were reviewed and adjusted as needed.
+
+
