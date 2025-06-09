@@ -19,11 +19,11 @@ pROC: ROC curve and AUC computation
 dplyr, ggplot2, tidyr: Data wrangling and visualization
 
 <h2>Project Structure</h2>
-├── data/                  # Contains the dataset 
-├── history/               # Scripts to show the changes done over time
-├── plots/                 # ROC curve and other visualizations
-├── README.md              # Project documentation
-└── credit_risk.qmd       # Main script to run the project
+- data/                  # Contains the dataset
+- history/               # Scripts to show the changes done over time
+- plots/                 # ROC curve and other visualizations
+- README.md              # Project documentation
+- credit_risk.qmd       # Main script to run the project
 
 <h2>Environment Setup (Windows)</h2>
 1. To run this project successfully on Windows, you'll need to install several essential R packages. Below is a guide to set up your environment.
@@ -51,5 +51,5 @@ install.packages("dplyr")
 
 <h2>Collaborators</h2>
 
-Daisy Mutua
-Alain Kalonji
+- Daisy Mutua
+- Alain Kalonji
