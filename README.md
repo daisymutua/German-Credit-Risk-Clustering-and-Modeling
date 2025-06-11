@@ -10,14 +10,6 @@ XGBoost: Gradient boosting for handling complex interactions and imbalanced data
 Logistic Regression: A baseline model for binary classification.
 Random Forest: An ensemble model to reduce overfitting and improve generalization.
 
-<h2>Libraries Used</h2>
-This project is built in R and leverages the following libraries:
-caret: Model training and cross-validation
-randomForest: Random forest classifier
-xgboost: XGBoost model
-pROC: ROC curve and AUC computation
-dplyr, ggplot2, tidyr: Data wrangling and visualization
-
 <h2>Project Structure</h2>
 - data/                  # Contains the dataset
 - history/               # Scripts to show the changes done over time
