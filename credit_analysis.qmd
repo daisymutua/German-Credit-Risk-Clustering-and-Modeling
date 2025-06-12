@@ -1,0 +1,1327 @@
+---
+title: "German Credit Risk Clustering and Modeling"
+author: "Alain Kalonji and Daisy Mutua"
+date: today
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-depth: 3
+    toc-location: body
+    theme: superhero
+    code-fold: true
+    code-summary: "Click to expand R code"
+    embed-resources: true
+  pdf: default
+execute:
+  echo: fenced
+  warning: false
+  cache: true
+  freeze: auto
+code-annotations: below
+title-block-banner: true
+number-sections: true
+number-depth: 3
+---
+
+# INTRODUCTION
+
+In the financial services industry, assessing credit risk is very important because lenders depend on this to decide the chances of a borrower not repaying a loan. Because of the easy access to data and progress in machine learning, predictive modeling is now vital in making credit scoring automatic and more advanced. With the German Credit dataset as a data source, this project is built and tested to see if machine learning algorithms can predict the likelihood of credit risk.
+
+This project seeks to capture whether a loan applicant is high-risk or low-risk using several numbers and categories representing _age, loan length, credit amount, job type, home status and various account_ information. It is our goal to compare Logistic Regression, Random Forest and XGBoost, with the plan to see which technique performs well in terms of accuracy, comprehensibility and reliability.
+
+All models have to undergo processing, be checked through cross-validation, have their hyperparameters set and be tested for performance. Factors such as _sensitivity, specificity, ROC-AUC and balanced accuracy_ play an important role in risk modeling and get extra attention. Also, making the model easy to interpret and usable for businesses is important to create a final solution that fulfills the statistic needs and can be used in the credit scoring field.
+
+```{r, message=FALSE}
+#load packages
+library(ggplot2)
+library(xgboost)
+library(dplyr)
+library(knitr)
+library(tidyr)
+library(tidyverse)
+library(gridExtra)
+library(tibble)
+library(caret)
+library(patchwork)
+library(GGally)
+```
+
+## OVERVIEW
+
+By doing this evaluation, it is possible to recognize the benefits and drawbacks of simple models such as logistic regression compared to the power of Random Forest and XGBoost. The main objective is to supply the required data for better and responsible decisions about credit.
+
+During the initial stage, we get to know the data structure, identify if they are numeric or categorical variables and see if values are missing. By doing this step, correct data processing and feature design take place before building the model.
+
+```{r, message=FALSE}
+options(warn = -1)
+# Charger le fichier CSV dans un dataframe
+library(readr)
+df <- read_csv("C:/Users/Alain/Downloads/german_credit_data (1).csv")
+head(df)
+```
+
+# EXPLORATORY DATA ANALYSIS (EDA)
+
+```{r}
+
+show_info <- function(data) {
+  # Display the shape of the dataset
+  cat("DATASET SHAPE:", dim(data), "\n")
+  cat(rep("-", 50), "\n")
+  
+  # Display data types
+  cat("FEATURE DATA TYPES:\n")
+  print(str(data))
+  cat("\n", rep("-", 50), "\n")
+  
+  # Number of unique values per feature
+  cat("NUMBER OF UNIQUE VALUES PER FEATURE:\n")
+  print(sapply(data, function(x) length(unique(x))))
+  cat("\n", rep("-", 50), "\n")
+  
+  # Number of missing values per feature
+  cat("NULL VALUES PER FEATURE:\n")
+  print(colSums(is.na(data)))
+}
+
+show_info(df)
+```
+
+## UNIVARIATE ANALYSIS
+
+### DISTRIBUTION PLOTS
+
+Credit amount Very right-skewed distribution: the majority of credits are < €5,000, with a few cases going up to €18,000. Presence of outliers: the density decreases slowly, indicating rare very high credits. Modeling implication: logarithmic transformation or normalization recommended.
+
+                  ---------------------------------------
+
+Most loan durations are between 12 and 36 months, with a peak 
+around 24 months, which matches standard repayment plans.
+Some loans last up to 72 months, which is less common.
+This means there are mainly “normal” loans, but also some unusual cases that should be monitored.
+
+                  ---------------------------------------
+
+The distribution is slightly skewed to the right (more younger than older people).
+There are many clients around 30 to 35 years old.
+Most clients are between 20 and 50 years old.
+This is the working-age population, which makes sense for people applying for credit.
+
+
+```{r, warning=FALSE}
+p1 <- ggplot(df, aes(x = `Credit amount`)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "steelblue",
+                 alpha = 0.6) +
+  geom_density(color = "steelblue", size = 1.2) +
+  theme_minimal()
+
+p2 <- ggplot(df, aes(x = Duration)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "salmon",
+                 alpha = 0.6) +
+  geom_density(color = "salmon", size = 1.2) +
+  theme_minimal()
+
+p3 <- ggplot(df, aes(x = Age)) +
+  geom_histogram(aes(y = ..density..), bins = 40, fill = "darkviolet",
+                 alpha = 0.6) +
+  geom_density(color = "darkviolet", size = 1.2) +
+  theme_minimal()
+
+(p1 | p2 | p3) +
+  plot_annotation(
+    title = "DISTRIBUTION PLOTS",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 16))
+  )
+```
+
+### HORIZONTAL BOX PLOTS without y-axis titles
+
+#### Boxplot 1 : Credit amount
+
+Half of the loans are around €2,300 to €2,500.
+Most amounts range between €1,300 and €4,000.
+There are a few very high loans (up to €18,000), rare but clearly present.
+In summary: most clients borrow small amounts, but the bank also grants a few large loans, which may pose a potential risk.
+
+                     ---------------------------------------
+
+The average loan duration is around 18 to 24 months.
+Most loans last between 12 and 36 months, which is standard.
+Some loans go beyond 60 months, but that’s rare.
+In short: long-term loans are not common, but they do exist.
+
+                     ---------------------------------------
+
+Half of the clients are around 33 years old.
+Most are between 25 and 45 years old.
+There are also some very old clients (over 65).
+In short: the main clients are young working adults, but older people also apply for credit.
+```{r}
+# Créer une variable factice pour positionner les boxplots
+df$var1 <- "Credit amount"
+df$var2 <- "Duration"
+df$var3 <- "Age"
+
+# Boxplot horizontal pour Credit amount
+p1 <- ggplot(df, aes(x = `Credit amount`, y = var1)) +
+  geom_boxplot(fill = "steelblue", color = "black", outlier.colour = "black") +
+  theme_minimal() +
+  xlab("Credit amount") +
+  ylab("") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+# Boxplot horizontal pour Duration
+p2 <- ggplot(df, aes(x = Duration, y = var2)) +
+  geom_boxplot(fill = "salmon", color = "black", outlier.colour = "black") +
+  theme_minimal() +
+  xlab("Duration") +
+  ylab("") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+# Boxplot horizontal pour Age
+p3 <- ggplot(df, aes(x = Age, y = var3)) +
+  geom_boxplot(fill = "darkviolet", color = "black", outlier.colour = "black") +
+  theme_minimal() +
+  xlab("Age") +
+  ylab("") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+# Afficher les 3 boxplots côte à côte avec titre
+grid.arrange(p1, p2, p3, ncol = 3, top = "BOX PLOTS")
+
+```
+
+
+There are more men than women among the clients.
+There are more clients with a good profile ("good risk") than those considered risky ("bad risk").
+In summary: the data is unbalanced — there are more men and more good-risk profiles.
+The dataset dates back to a time when men were more often the ones applying for credit (the original German Credit Data is from 1994).
+This likely reflects a time when:
+Men were more present in the labor market,
+They more often had stable incomes recognized by banks,
+Women more often relied on a guarantor or a spouse.
+This imbalance may be linked to past social or economic norms, rather than to an inherent risk bias.
+
+```{r}
+### COUNTPLOTS (SEX & RISK FACTOR)
+df$Sex <- factor(df$Sex, levels = c("male", "female"))  
+df$Risk <- factor(df$Risk, levels = c("good", "bad"))   
+
+sex_colors <- c("male" = "#8E24AA",    
+                "female" = "#C2185B")  
+
+risk_colors <- c("bad"  = "#EF6C00",   
+                 "good" = "#F06292")   
+```
+
+#### Barplot Sex
+```{r}
+p1 <- ggplot(df, aes(x = Sex, fill = Sex)) +
+  geom_bar() +
+  scale_fill_manual(values = sex_colors) +
+  theme_minimal() +
+  labs(title = "Count Plot: Sex", x = "Sex", y = "Count") +
+  theme(legend.position = "none")
+
+# Barplot Risk
+p2 <- ggplot(df, aes(x = Risk, fill = Risk)) +
+  geom_bar() +
+  scale_fill_manual(values = risk_colors) +
+  theme_minimal() +
+  labs(title = "Count Plot: Risk", x = "Risk", y = "Count") +
+  theme(legend.position = "none")
+
+#Display side by side
+grid.arrange(p1, p2, ncol = 2)
+```
+
+```{r}
+library(psych)
+
+kable(describe(df[, c("Age", "Duration", "Credit amount")]))
+```
+
+## BIVARIATE ANALYSIS
+
+Young adults (20–30 years):
+Credit amounts usually range from €2,000 to €4,000
+Likely motivations: consumer goods (TVs, furniture), first-time equipment, or education expenses
+Lower income/stability = moderate loan size
+Adults (30–50 years):
+More variation, often reaching €8,000–10,000
+Likely motivations: family-related investments, home improvement, or vehicle purchases
+Higher financial stability = access to larger credits
+Seniors (> 60 years):
+Typically take smaller loans (~€1,000 to €2,000)
+Likely motivations: short-term needs, healthcare, or precautionary spending
+Fixed incomes (e.g., pensions) = more conservative lending
+
+                      ---------------------------------------
+
+Often for immediate consumption (appliances, bills)
+Medium duration (24–36 months) = durable goods or moderate investments Vehicle purchase, home equipment, minor renovations
+Long duration (48–60 months) = higher loan amounts
+Likely for larger projects: major renovations, self-employment, or business investment
+
+                      ---------------------------------------
+                      
+Young adults (25–40 years) = prefer medium durations (24–36 months)
+A balanced approach: affordable monthly payments, long enough to finance setup needs
+Older clients = prefer shorter durations
+Less interest in long-term commitments; focus on manageable repayments      
+
+```{r, warning=FALSE}
+
+library(grid)
+
+main_title <- "BIVARIATE ANALYSIS (HUE=SEX)"
+
+p1 <- ggplot(df, aes(x = Age, y = `Credit amount`, color = Sex)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80",
+              alpha = 0.4, span = 1) +  
+  theme_minimal() +
+  ggtitle("Age vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(df, aes(x = Duration, y = `Credit amount`, color = Sex)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80",
+              alpha = 0.4, span = 1) +  
+  theme_minimal() +
+  ggtitle("Duration vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- ggplot(df, aes(x = Age, y = Duration, color = Sex)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.4, span = 1) +  
+  theme_minimal() +
+  ggtitle("Age vs Duration") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(
+  p1, p2, p3,
+  ncol = 1,
+  top = textGrob(main_title, gp = gpar(fontsize = 20, fontface = "bold")))
+```
+
+
+Clients labeled as "bad risk" (i.e., more likely to default):
+tend to request larger credit amounts (often over €6,000),
+and choose longer loan durations (typically over 36 months).
+The density curves are higher in the area:
+with high credit amount + long duration
+mostly for "bad risk" clients
+The higher the loan amount and the longer the duration,
+the higher the likelihood that the client will be classified as high-risk.
+Because:Large loans are harder to repay,
+Clients labeled as "bad risk" are often found in the younger age groups (typically under 35 years).
+Clients above 40–50 years old tend to be more often classified as "good risk".
+
+```{r, warning=FALSE}
+
+library(RColorBrewer)
+
+main_title <- "BIVARIATE ANALYSIS (HUE=RISK)"
+
+palette_deep <- brewer.pal(n = length(unique(df$Risk)), name = "Dark2")
+
+p1 <- ggplot(df, aes(x = Age, y = `Credit amount`, color = Risk)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.3) +  
+  scale_color_manual(values = palette_deep) +
+  theme_minimal() +
+  ggtitle("Age vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(df, aes(x = Duration, y = `Credit amount`, color = Risk)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.3) +  
+  scale_color_manual(values = palette_deep) +
+  theme_minimal() +
+  ggtitle("Duration vs Credit amount") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- ggplot(df, aes(x = Age, y = Duration, color = Risk)) +
+  geom_line(size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE, colour = NA, fill = "grey80", 
+              alpha = 0.3) +  
+  scale_color_manual(values = palette_deep) +
+  theme_minimal() +
+  ggtitle("Age vs Duration") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(
+  p1, p2, p3,
+  ncol = 1,
+  top = textGrob(main_title, gp = gpar(fontsize = 20, fontface = "bold")))
+```
+
+### PAIRPLOT TO VISUALIZE FEATURES WITH LINEAR RELATIONSHIP
+
+Credit amount vs Duration:
+There is a positive relationship –
+-  Clients who borrow larger amounts tend to choose longer repayment periods.
+Age vs other variables:
+-  No clear relationship.
+Older or younger clients don't show strong patterns in job level, credit amount, or loan duration.
+People who borrow more usually want more time to repay.
+A person’s age doesn’t strongly affect how much they borrow, how long, or what job level they have.
+```{r}
+# Select only the columns of interest
+df_subset <- df[, c("Job", "Duration", "Credit amount", "Age")]
+
+ggpairs(df_subset,
+        diag = list(continuous = "barDiag"),   
+        upper = list(continuous = "points"),   
+        lower = list(continuous = "points")    
+) +
+  ggtitle("Histograms on Diagonal and Scatterplots Off-Diagonal
+          for Selected Variables") +
+  theme_minimal()
+```
+
+### SAVING ACCOUNT ANALYSIS
+
+Clients with "little" or no savings are mostly found in the "bad risk" group.
+Clients with higher savings ("rich", "quite rich") are more likely to be "good risk".
+When savings are low, the credit amounts are more spread out — some borrow a lot, others very little.
+When savings are high, the credit amounts are more stable and less extreme.
+Clients with low or no savings are more likely to struggle with repayment, so they’re seen as higher risk.
+Clients with more savings are financially safer and are less risky for the bank.
+```{r, warning=FALSE}
+# Graphique 1 : Count plot 'Saving accounts' par 'Risk'
+p1 <- ggplot(df, aes(x = `Saving accounts`, fill = Risk)) +
+  geom_bar(position = "dodge") +
+  scale_fill_brewer(palette = "Greens") +
+  ggtitle("Count Plot: Saving accounts by Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique 2 : Boxenplot 'Credit amount' par 'Saving accounts' et 'Risk'
+p2 <- ggplot(df, aes(x = `Saving accounts`, y = `Credit amount`,
+                     fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8)) +
+  scale_fill_brewer(palette = "Greens") +
+  ggtitle("Boxenplot: Credit amount by Saving accounts and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique 3 : Violin plot 'Job' par 'Saving accounts' et 'Risk'
+p3 <- ggplot(df, aes(x = `Saving accounts`, y = factor(Job), fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8), scale = "area") +
+  scale_fill_brewer(palette = "Greens") +
+  ggtitle("Violin Plot: Job by Saving accounts and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Affichage des 3 graphiques en colonne
+grid.arrange(p1, p2, p3, ncol = 1, heights = c(1, 1, 1))
+```
+
+### SHOW BASIC STATS PER SAVING ACCOUNT
+
+```{r}
+
+# Apply summary to each group and each relevant variable
+
+summary_by_saving <- df %>%
+  group_by(`Saving accounts`) %>%
+  summarise(across(c(Duration, Job, `Credit amount`), list(
+    Min = ~min(., na.rm = TRUE),
+    Q1 = ~quantile(., 0.25, na.rm = TRUE),
+    Median = ~median(., na.rm = TRUE),
+    Mean = ~mean(., na.rm = TRUE),
+    Q3 = ~quantile(., 0.75, na.rm = TRUE),
+    Max = ~max(., na.rm = TRUE),
+    SD = ~sd(., na.rm = TRUE)
+  ), .names = "{.col}_{.fn}"))
+
+```
+
+```{r}
+summary_transposed <- summary_by_saving %>%
+  pivot_longer(-`Saving accounts`, names_to = "Measure", 
+               values_to = "Value") %>%
+  pivot_wider(names_from = `Saving accounts`, values_from = Value)
+
+kable(print(summary_transposed))
+```
+
+### ANALYSIS BY CREDIT CARD PURPOSE
+
+Job type doesn’t change much with loan purpose, but some purposes (like vacations) attract people from varied professional backgrounds.
+```{r}
+# Count plot
+p1 <- ggplot(df, aes(x = `Purpose`, fill = Risk)) +
+  geom_bar(position = "dodge") +
+  scale_fill_brewer(palette = "Pastel1") +  # Proche du "muted" de seaborn
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  ggtitle("Count Plot: Purpose by Risk")
+
+
+p2 <- ggplot(df, aes(x = `Purpose`, y = `Credit amount`, fill = Risk)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  ggtitle("Box Plot: Credit Amount by Purpose and Risk")
+
+# Violin plot
+p3 <- ggplot(df, aes(x = `Purpose`, y = Job, fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8), trim = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  ggtitle("Violin Plot: Job by Purpose and Risk")
+
+
+(p1 / p2 / p3) + plot_layout(heights = c(1, 1, 1)) & 
+  plot_annotation(title = "Visualizations Grouped by Purpose (Hue = Risk)",
+                  theme = theme(plot.title = element_text(hjust = 0.5,
+                                                          size = 16)))
+```
+
+### PER HOUSING
+People who own their homes are usually seen as more stable.
+People who rent may have less financial security, so they are a bit riskier.
+A person’s job level doesn’t change much depending on their housing type.
+
+```{r, warning=FALSE}
+
+library(ggdist)
+
+
+custom_colors <- c("Bad" = "#8A2BE2",  # mauve (blueviolet)
+                   "Good" = "#C71585") # vin rose (mediumvioletred)
+
+# Count plot : Housing vs Risk
+p1 <- ggplot(df, aes(x = Housing, fill = Risk)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = custom_colors) +
+  ggtitle("Count Plot: Housing by Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Boxenplot (approxim??)
+p2 <- ggplot(df, aes(x = Housing, y = `Credit amount`, fill = Risk)) +
+  stat_halfeye(
+    adjust = 0.5,
+    width = 0.6,
+    .width = 0,
+    justification = -0.2,
+    point_colour = NA,
+    position = position_dodge(width = 0.8)
+  ) +
+  geom_boxplot(
+    width = 0.2,
+    outlier.shape = NA,
+    position = position_dodge(width = 0.8)
+  ) +
+  scale_fill_manual(values = custom_colors) +
+  ggtitle("Boxenplot: Credit amount by Housing and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Violin plot : Housing vs Job (Hue = Risk)
+p3 <- ggplot(df, aes(x = Housing, y = Job, fill = Risk)) +
+  geom_violin(position = position_dodge(width = 0.8)) +
+  scale_fill_manual(values = custom_colors) +
+  ggtitle("Violin Plot: Job by Housing and Risk") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Combination of the 3 plots
+
+(p1 / p2 / p3) + 
+  plot_layout(heights = c(1, 1, 1)) + 
+  plot_annotation(title = "Grouped Visualizations by Housing (Hue = Risk)",
+                  theme = theme(plot.title = element_text(hjust = 0.5, 
+                                                          size = 16)))
+```
+
+# DATA PROCESSING
+
+## Normalize numeric features
+
+Before using the data for machine learning, it was needed to clean and organize it properly. At first, NAs in the dataset were all replaced by the string “unknown” to make sure results were consistent. Because of this solution, categorical variables with gaps in their data remained in the model without being misunderstood. Once the missing values were dealt with, the extra "...1" index column was removed to reduce the size of the dataset’s features.
+
+```{r}
+library(scales)
+
+# Replace NA values with "unknown"
+df[is.na(df)] <- "unknown"
+
+# Check for NA values
+kable(colSums(is.na(df)))
+```
+
+```{r}
+# Drop the '...1' column
+df <- df %>% select(-`...1`)
+```
+
+
+Followed by this, the categories included in the dataset: _Sex, Job, Housing, Saving accounts, Checking account, Purpose and Risk_ were assigned numbers using the R function factor(). It was done by assigning every distinct category to its own integer. The method is straightforward, but no ordinal connections are suggested, so any variables that have an inherent order were handled correctly whenever this was necessary.
+
+```{r}
+# Define categorical features
+categorical_features <- c('Sex', 'Job', 'Housing', 'Saving accounts', 
+                          'Checking account', 'Purpose', 'Risk')
+
+# Label encode the categorical features
+df[categorical_features] <- lapply(df[categorical_features], 
+                                   function(x) as.numeric(factor(x)))
+
+# Show head of new dataframe
+kable(head(df))
+```
+After that, the variables called _Age, Duration and Credit amount_ were chosen for transformation. Their uneven distribution can harm the performance of a lot of machine learning algorithms. So, a logarithmic transformation was used with each of the above features. The change helped cut down the skewness, make all the data more similar and make extreme records less significant, which led to stronger models.
+
+```{r}
+# LOG TRANSFORMATION OF NUMERIC FEATURES
+num_df <- df %>% select(Age, Duration, `Credit amount`)
+num_df_log <- log(num_df)
+
+# Plot distributions after log transformation
+par(mfrow = c(1, 3))
+
+# Credit amount
+hist(num_df_log$`Credit amount`, breaks = 40, main = "Credit Amount", 
+     col = "skyblue", xlab = "", border = "white", probability = TRUE)
+lines(density(num_df_log$`Credit amount`), col = "blue", lwd = 2)
+
+# Duration
+hist(num_df_log$Duration, breaks = 40, main = "Duration", 
+     col = "salmon", xlab = "", border = "white", probability = TRUE)
+lines(density(num_df_log$Duration), col = "red", lwd = 2)
+
+# Age
+hist(num_df_log$Age, breaks = 40, main = "Age", 
+     col = "darkviolet", xlab = "", border = "white", probability = TRUE)
+lines(density(num_df_log$Age), col = "black", lwd = 2)
+
+```
+The trained numerical information was combined with the encoded categorical data to finish the processing of the data. With this approach, the dataset was cleaned and organized so that it was prepared for the next modeling stage. The transformation brought about an equally weighted dataset in which every feature, whether categorical or numerical, was made ready for machine learning modeling. 
+The output above presents the arrangement of three changed numerical features: Credit Amount, Duration and Age. A histogram for each plot illustrates the frequency and a kernel density estimate is placed on top to give a smooth outline of the feature’s distribution.
+
+    1. Credit Amount: After logarithmic transformation, there is a fairly 
+    symmetric, bell-shaped distribution in the data of Credit Amount. The curve
+    is very similar to a normal distribution, which means that log 
+    transformation did what it was supposed to do and reduced skewness. It is
+    necessary to make this change, since credit amounts commonly have large 
+    values on the right end, meaning untreated models could be biased.
+
+    2. Duration: The distribution of the Duration variable even after doing a
+    log transformation is still multimodal and not smooth. Since the density 
+    curve has several peaks, it implies that there are many segments or
+    categories in this variable (for example, common loan periods such as 12, 
+    24 and 36 months). Although it removes some skewness, the transformation is
+    not able to fully normalize the distribution that is found in discrete 
+    duration variables.
+
+    3. Age: People tend to be less than 35 years old, but some live even older.
+    The transformation makes sure that extreme facts are given little weight 
+    and that the data fit for modeling are closer to the norm.
+
+                 ---------------------------------------
+
+To improve the data’s distribution, these numerical features were Z-score normalized after being log-transformed. The caret package allows the use of the _center_ and _scale_ methods, which makes sure that the variables used for analysis all equal zero and one in standard deviation. As some algorithms, including logistic regression and support vector machines, are affected by the scale of their features, this step is very important.
+
+```{r}
+# STANDARDISE THE NUMERIC FEATURES
+preProc <- preProcess(num_df_log, method = c("center", "scale"))
+num_df_scaled <- predict(preProc, num_df_log)
+
+# Show dimensions and values
+num_df_scaled <- as.data.frame(num_df_scaled)
+num_df_scaled <- data.frame(lapply(num_df_scaled, as.numeric))
+
+dim(num_df_scaled)
+
+```
+Because the output has dimensions 1000 × 3, it means that the dataset has all 1000 rows and 3 original numeric features after standardization. After looking at the preview, you can see the values that each variable has in the standardized dataset.
+
+```{r}
+kable(head(num_df_scaled))
+```
+
+# CLUSTERING
+
+The graph shows the inertia (total within-cluster variation) for different numbers of clusters (from 2 to 15).
+Inertia decreases as the number of clusters increases.
+We look for an "elbow" — a point where the decrease slows down — to choose the best number of clusters.
+Here, the elbow appears to be around 3 to 5 clusters.
+```{r}
+##CLUSTERING
+
+#K-MEANS
+#APPLYING ELBOW METHOD TO FIND THE BEST NUMBER OF CLUSTERS
+
+inertias <- numeric()
+
+for (i in 2:15) {
+  set.seed(0)
+  kmeans_result <- kmeans(num_df_scaled, centers = i, nstart = 25)
+  inertias[i - 1] <- kmeans_result$tot.withinss
+}
+
+df_elbow <- data.frame(
+  k = 2:15,
+  inertia = inertias
+)
+
+ggplot(df_elbow, aes(x = k, y = inertia)) +
+  geom_line(color = "steelblue", size = 1.2) +
+  geom_point(color = "steelblue", size = 3) +
+  ggtitle("ELBOW METHOD") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(breaks = 2:15)
+```
+
+
+Although 2 clusters give the highest silhouette score, 3 clusters allow for a more detailed segmentation of clients. This can be useful for better distinguishing risk or behavioral profiles, while still maintaining a good level of separation quality (with scores around 0.30).
+
+```{r, warning=FALSE}
+library(cluster)
+
+#ALTERNATIVE METHOD: SILHOUTE SCORE WITH RANDOM SAMPLING
+
+# Supposons que num_df_scaled est votre dataframe/matrice normalis??e
+
+results <- data.frame(num_cluster = integer(),
+                      seed = integer(),
+                      sil_score = numeric())
+
+# Boucle pour k de 2 ?? 15 et seed de 0 ?? 19
+for (i in 2:15) {
+  for (r in 0:19) {
+    set.seed(r)
+    kmeans_result <- kmeans(num_df_scaled, centers = i, nstart = 25)
+    c_labels <- kmeans_result$cluster
+    sil <- silhouette(c_labels, dist(num_df_scaled))
+    sil_ave <- mean(sil[, 3])
+    results <- rbind(results, data.frame(num_cluster = i, seed = r,
+                                         sil_score = sil_ave))
+  }
+}
+```
+
+```{r}
+
+library(viridis)
+library(pheatmap)
+
+
+pivot_kmeans <- reshape2::dcast(results, num_cluster ~ seed, 
+                                value.var = "sil_score")
+rownames(pivot_kmeans) <- pivot_kmeans$num_cluster
+pivot_kmeans$num_cluster <- NULL
+
+
+mat <- as.matrix(pivot_kmeans)
+
+
+magma_palette <- viridis(100, option = "magma")
+
+# Affichage heatmap avec pheatmap
+pheatmap(mat,
+         color = magma_palette,
+         display_numbers = TRUE,
+         number_format = "%.3f",
+         fontsize_number = 8,
+         cluster_rows = FALSE,
+         cluster_cols = FALSE,
+         main = "Silhouette Scores Heatmap (num_cluster vs seed)",
+         border_color = "grey")
+
+# The scores of 2,3,4 and 5 are pretty stable, Let's pick a number 
+# of cluster from that range.
+```
+
+
+Axes show three variables: Duration, Credit amount, and Age.
+Each point is colored by its cluster (3 groups shown).
+Clusters are mostly separated, but some overlap may exist.
+```{r, message=FALSE}
+# to plot the 3d 
+
+library(rgl)
+```
+
+```{r}
+
+#AT 3 NUMBER OF CLUSTERS
+set.seed(0)
+km <- kmeans(num_df_scaled, centers = 3, nstart = 25)
+clusters <- km$cluster
+
+# plot 3D avec rgl
+plot3d(num_df_scaled[,1], num_df_scaled[,2], num_df_scaled[,3],
+       col = clusters,
+       size = 5,
+       type = "s",
+       xlab = colnames(num_df_scaled)[1],
+       ylab = colnames(num_df_scaled)[2],
+       zlab = colnames(num_df_scaled)[3],
+       main = "3D Scatter Plot of KMeans Clusters")
+
+rglwidget()
+```
+
+Explore relationships between variable pairs by cluster.
+Duration vs Credit amount: Shows if clusters differ based on these two features.
+Age vs Credit amount: Checks if age and credit amount influence cluster grouping.
+Age vs Duration: Reveals time-related patterns linked to age.
+Conclusion: Clusters reflect differences like young clients with small loans vs older ones with longer durations.
+
+```{r}
+# Assurez-vous que clusters est un facteur
+df$clusters <- factor(clusters)
+
+# Palette cividis (via viridis)
+cividis_pal <- viridis::viridis(n = length(levels(df$clusters)), option = "C")
+
+p1 <- ggplot(df, aes(x = Duration, y = `Credit amount`, color = clusters)) +
+  geom_point() +
+  scale_color_manual(values = cividis_pal) +
+  theme_minimal() +
+  ggtitle("Duration vs Credit amount")
+
+p2 <- ggplot(df, aes(x = Age, y = `Credit amount`, color = clusters)) +
+  geom_point() +
+  scale_color_manual(values = cividis_pal) +
+  theme_minimal() +
+  ggtitle("Age vs Credit amount")
+
+p3 <- ggplot(df, aes(x = Age, y = Duration, color = clusters)) +
+  geom_point() +
+  scale_color_manual(values = cividis_pal) +
+  theme_minimal() +
+  ggtitle("Age vs Duration")
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+```{r, warning=FALSE}
+# LET'S CREATE A DATAFRAME TO SUMMARIZE THE RESULT
+
+# Cr??er un nouveau dataframe avec les colonnes d??int??r
+# ??t et la variable cluster
+df_clustered <- df %>%
+  select(Age, Duration, `Credit amount`) %>%
+  mutate(cluster = factor(clusters))
+
+```
+
+Cluster Summary Table
+Goal: Show the average characteristics (Age, Duration, Credit amount) of each cluster.
+Use: Helps describe each group, like “young clients with small loans” vs “older clients with large loans.”
+
+```{r}
+# Calculer la moyenne par cluster
+df_clustered_summary <- df_clustered %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+kable(print(df_clustered_summary))
+```
+
+# PREDICTIVE MODELLING
+
+Our goal is to create and assess models that are able to estimate if a person is likely to default on credit based on different features and criteria. Making important decisions about loan applications in credit scoring depends on using predictive modelling. We will carry out and review the results of three standard classification algorithms: Logistic Regression, Random Forest and Extreme Gradient Boosting (XGBoost) to meet the desired outcome. Every model stands for a separate class of learning techniques; logistic regression is a linear basic method, random forest is an ensemble and XGBoost uses gradient boosting. By examining and checking the outcomes for every model, we wish to pick the most appropriate method for predicting risk in this case.
+
+
+## XGBOOST
+
+The XGBoost algorithm in this case shows how to join both numeric and categorical variables in a well-organized way. The scaler applied to these numerical features evenly distributes the input for XGBoost, which helps these gradient-based algorithms. At the same time, variables such as _Sex, Job, Housing, Saving Accounts, Checking Account_  and _Purpose_ are handled with special care to preserve their usefulness for prediction. By mixing both types of features, the dataset becomes more useful and helps the model identify complicated trends in credit actions.
+
+```{r}
+library(xgboost)
+library(caret)
+
+# Combine numeric and categorical data
+num_df_scaled <- as.data.frame(num_df_scaled)
+colnames(num_df_scaled) <- c("Age", "Duration", "Credit_amount")  
+cat_df <- df %>% select(all_of(categorical_features))  
+
+data <- bind_cols(cat_df, num_df_scaled)
+data$Risk <- df$Risk  # Add target variable
+# Display first few rows
+kable(head(data))
+```
+
+```{r}
+# Split data into features (x) and target (y)
+x <- data[, !grepl("Risk", names(data))]
+y <- data$Risk
+
+# Perform train-test split
+set.seed(101)  
+split_index <- sample(nrow(data), nrow(data)*0.2)
+x_test <- x[split_index, ]
+x_train <- x[-split_index, ]
+y_test <- y[split_index]
+y_train <- y[-split_index]
+
+# Print dimensions
+print(paste('xtrain shape: ', dim(x_train)[1], 'rows,', dim(x_train)[2], 'columns'))
+print(paste('xtest shape: ', dim(x_test)[1], 'rows,', dim(x_test)[2], 'columns'))
+print(paste('ytrain shape: ', length(y_train)))
+print(paste('ytest shape: ', length(y_test)))
+```
+
+
+### Hyper Parameter Tuning
+
+To get the best results, a hyper parameter is followed to set the XGBoost parameters. These are some settings: tuning _nrounds_ for the boosting algorithm, _max_depth_ for trees, _eta_ as the learning rate and regularization terms _gamma, min_child_weight, subsample and colsample_bytree_. They play a key role in managing how complex a model is, how well it generally works and how much it resists overfitting. The model reviews a broad range of solution possibilities by using different sample values and finally opting for the one that achieves the highest RoC-AUC performance.
+
+```{r, message=FALSE}
+# Convert target to factor 
+y_train <- as.factor(y_train)
+levels(y_train)
+
+levels(y_train) <- make.names(levels(y_train))
+```
+
+Maintaining class balance across the 5 folds was made possible using 5-fold cross-validation with stratification in the model evaluation. Reducing overfitting also insures that the obtained key numbers are able to apply to unseen data too. Since cross-validation is joined with caret’s trainControl, it provides a way to assess chances and make comparisons between models based on ROC-AUC.
+
+```{r}
+# Combine x and y for caret
+train_data <- cbind(x_train, Risk = y_train)
+
+# Generate random hyperparameter grid 
+set.seed(123)
+xgb_random_grid <- data.frame(
+  nrounds = sample(50:300, 25, replace = TRUE),  
+  max_depth = sample(1:50, 25, replace = TRUE),
+  eta = runif(25, 0, 2),                         
+  gamma = runif(25, 0, 1),            
+  colsample_bytree = runif(25, 0.5, 1),
+  min_child_weight = sample(1:10, 25, replace = TRUE),
+  subsample = runif(25, 0.5, 1)
+)
+
+# Define trainControl with cross-validation
+control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = FALSE,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  allowParallel = TRUE
+)
+
+# Train XGBoost model using random search
+set.seed(123)
+xgb_model <- train(
+  Risk ~ .,
+  data = train_data,
+  method = "xgbTree",
+  metric = "ROC",
+  tuneGrid = xgb_random_grid,
+  trControl = control
+)
+```
+
+```{r}
+# Ensure y_test is a factor and get its levels
+y_test <- factor(y_test)
+levels_y <- levels(y_test)
+
+# Predict probabilities for XGBoost
+xgb_probs <- predict(xgb_model, x_test, type = "prob")[, 2]  # column "X1" usually
+
+# Convert probabilities to class predictions
+xgb_preds <- ifelse(xgb_probs > 0.5, levels_y[2], levels_y[1])  # thresholding
+xgb_preds <- factor(xgb_preds, levels = levels_y)
+
+# Create confusion matrix
+confusionMatrix(data = xgb_preds, reference = y_test)
+
+```
+The model gave an overall accuracy of 75.5%. Since the model’s sensitivity is very high at 97.16%, this means it does a great job at detecting customers who are more likely to default or possess higher risk. Still, the model does not do very well at identifying low-risk applicants, since its specificity is low. It signals that the system prefers to detect the most serious situations by sometimes categorizing a few people as more risky than they are. The balanced accuracy of 0.6045 allows us to look at the results in a more impartial way because it takes into account both sensitivity and specificity. Although the predicted and actual classes agree with each other, the fair agreement score of 0.26 proves that there is still room for enhancement.
+
+
+### Plotting ROC Curve
+
+```{r, echo=FALSE}
+#| label: factor
+y <- as.factor(y)
+levels(y)  # Should be length 2, e.g., "bad" and "good"
+
+```
+
+```{r}
+xgb_model_func <- function(x_train, y_train) {
+  dtrain <- xgboost::xgb.DMatrix(data = as.matrix(x_train), label = as.numeric(y_train) - 1)
+  
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "auc"
+  )
+  
+  model <- xgboost::xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = 100,
+    verbose = 0
+  )
+  
+  return(model)
+}
+
+```
+
+```{r}
+#| label: roc
+plot_roc_cv <- function(x, y, model_func, n_splits = 10) {
+  set.seed(123)
+  folds <- caret::createFolds(y, k = n_splits, list = TRUE, 
+                              returnTrain = FALSE)
+  
+  all_roc_data <- list()
+  
+  for (i in seq_along(folds)) {
+    test_idx <- folds[[i]]
+    train_idx <- setdiff(seq_along(y), test_idx)
+    
+    test_y <- y[test_idx]
+    
+    # Skip fold if only one class is present in y
+    if (length(unique(test_y)) < 2) {
+      message(sprintf("Fold", i))
+      next
+    }
+    
+    model <- model_func(x[train_idx, ], y[train_idx])
+    
+    dtest <- xgboost::xgb.DMatrix(data = as.matrix(x[test_idx, ]))
+    prob_pred <- predict(model, dtest)
+    
+    # Force levels to match full dataset 
+    roc_obj <- pROC::roc(response = test_y,
+                         predictor = prob_pred,
+                         levels = levels(y),  
+                         direction = "<")     
+    
+    fold_auc <- as.numeric(pROC::auc(roc_obj))
+    n_points <- length(roc_obj$sensitivities)
+    
+    df <- data.frame(
+      fpr = 1 - roc_obj$specificities,
+      tpr = roc_obj$sensitivities,
+      fold = paste("Fold", i),
+      auc = rep(fold_auc, n_points)
+    )
+    
+    all_roc_data[[i]] <- df
+  }
+  
+  roc_df <- dplyr::bind_rows(all_roc_data)
+  mean_auc <- mean(sapply(all_roc_data, function(df) unique(df$auc)))
+  
+  ggplot(roc_df, aes(x = fpr, y = tpr, color = fold)) +
+    geom_line(alpha = 0.6, size = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", 
+                color = "black") +
+    labs(
+      title = sprintf("10-Fold ROC Curve (Mean AUC = %.2f)", mean_auc),
+      x = "False Positive Rate",
+      y = "True Positive Rate",
+      color = "Fold"
+    ) +
+    theme_minimal()
+}
+
+plot_roc_cv(x, y, xgb_model_func, n_splits = 10)
+```
+
+The 10-fold cross-validation process in ROC analysis helped us judge how well the model discriminates results. In the ROC plot, the average AUC suggests that the model beats random guesses and should enhance the consistency between the outcomes of false alarms and missed detection. Overall, XGBoost is quite good at helping identify high-risk cases, but it could be improved if it can better spot less risky people.
+
+
+## LOGISTIC REGRESSION
+
+Logistic Regression is an effective base model for cases like when there are two categories, for instance, labeling credit risk. Being easy to understand, efficient and providing probabilities, machines learning helps finance leaders make better decisions. In the coded solution, the outcome variable y is set up as a factor and its levels are made in accordance with caret’s _twoClassSummary_ that uses ROC-AUC to assess results.
+
+It is made easier to train the model by using the caret package and 5-fold cross-validation. Doing this makes certain each fold includes the full data’s class imbalance and helps avoid models being biased during evaluation. The model uses the logistic function because the binomial family has been chosen. Since Data Imbalance Classification optimizes ROC-AUC, it is better prepared to evaluate how wrong and right predictions are made for each threshold.
+
+```{r}
+# y is a binary factor with proper levels
+y <- as.factor(y)
+levels(y) <- make.names(levels(y))  
+
+# Combine features and labels
+log_train_data <- cbind(x_train, Risk = y_train)
+
+# Set up caret control
+control <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  allowParallel = TRUE
+)
+
+# Train logistic regression
+set.seed(123)
+log_model <- train(
+  Risk ~ .,
+  data = log_train_data,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = control
+)
+```
+
+```{r}
+log_probs <- predict(log_model, x_test, type = "prob")[, 2]
+log_preds <- ifelse(log_probs > 0.5, levels_y[2], levels_y[1])
+log_preds <- factor(log_preds, levels = levels_y)
+confusionMatrix(data = log_preds, reference = y_test)
+```
+    1. The model can effectively detect people who may be high-risk (positive cases)
+    because _sensitivity_ is 84.40%.It becomes important in credit risk models since
+    missing risky people might bring about financial loss.
+    2. On the other hand, the score for _specificity_ (44.07%) is quite low, so
+    many low-risk people are marked as high-risk incorrectly. Despite the 
+    limitation of opportunity cost, most people still accept it as a reasonable 
+    approach when reviewing major credits.
+    3. The fact that balanced _accuracy_ is 64.23% means that the tool can 
+    distinguish between patients and controls moderately well.
+    4. With kappa at 0.301, the agreement is fair and stands higher than a
+    random assignment would give.
+
+Out of the total 190 cases examined, 119 were correctly identified as high-risk, 26 were correctly identified as low-risk, but 33 people were wrongly marked as high-risk and 22 others wrongly as low-risk. This way of distributing weights supports the model’s habit of favoring sensitivity rather than specificity.
+
+
+### Logistic Regression ROC Cross-Validation
+
+To make sure the model functions well in various subsets, a 10-fold cross-validated ROC analysis is applied. Every time, a logistic regression model is made, tested and given an ROC curve, with AUC being calculated as the final step. This process not only shows the range of AUC values across folds but also averages them all, which proves stronger than basing performance only on a single fold’s score.
+
+Plots of ROC can give many details about the algorithm’s classification. There are more predictions from the classifier that are above the diagonal, revealing its capability to learn. Although AUC changed slightly between folds, the overall measure is still above 0.70, proving that the model is accurate. Using the cross-validation technique avoids the problem of the model only being good for the current train-test split, aided in being used for different new sets of data.
+
+```{r}
+log_model_func <- function(x_train, y_train) {
+  df <- cbind(x_train, Risk = y_train)
+  model <- glm(Risk ~ ., data = df, family = binomial)
+  return(model)
+}
+
+plot_roc_cv_logreg <- function(x, y, model_func, n_splits = 10) {
+  set.seed(123)
+  folds <- caret::createFolds(y, k = n_splits)
+  all_roc_data <- list()
+
+  for (i in seq_along(folds)) {
+    test_idx <- folds[[i]]
+    train_idx <- setdiff(seq_along(y), test_idx)
+    test_y <- y[test_idx]
+
+    if (length(unique(test_y)) < 2) {
+      message(sprintf("Fold", i))
+      next
+    }
+
+    model <- model_func(x[train_idx, ], y[train_idx])
+    prob_pred <- predict(model, x[test_idx, ], type = "response")
+
+    roc_obj <- pROC::roc(
+      response = test_y,
+      predictor = prob_pred,
+      levels = levels(y),
+      direction = "<"
+    )
+
+    fold_auc <- as.numeric(pROC::auc(roc_obj))
+    df <- data.frame(
+      fpr = 1 - roc_obj$specificities,
+      tpr = roc_obj$sensitivities,
+      fold = paste("Fold", i),
+      auc = rep(fold_auc, length(roc_obj$sensitivities))
+    )
+
+    all_roc_data[[i]] <- df
+  }
+
+  roc_df <- dplyr::bind_rows(all_roc_data)
+  mean_auc <- mean(sapply(all_roc_data, function(df) unique(df$auc)))
+
+  ggplot(roc_df, aes(x = fpr, y = tpr, color = fold)) +
+    geom_line(alpha = 0.6, size = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    labs(
+      title = sprintf("10-Fold ROC (LogReg, Mean AUC = %.2f)", mean_auc),
+      x = "False Positive Rate", y = "True Positive Rate"
+    ) +
+    theme_minimal()
+}
+
+plot_roc_cv_logreg(x, y, log_model_func)
+```
+
+Logistic regression is one of the most distinguished because it is simple to understand. Each coefficient in the model shows the log-odds of the event (credit default) just because one unit of the predictor changes. It matters a lot in finance regulations, as being transparent is equally significant as performing the original task.
+
+Since the model is very sensitive, it stands out as a good way to identify applicants who could be a risk. Usually, these financial institutions choose conservative models at the beginning to lower the chance of defaults. Although the model is specific enough to support the main goal, occasionally, it rejects potential good customers and this can result in lowered satisfaction and financial losses.
+
+
+## RANDOM FOREST
+
+In the process of bagging, the caret package uses the _randomForest_ engine to train the model and check it using 5 different types of cross-validation. It is set up to increase the AUC, which does not depend on a given threshold and performs well when there are more samples in one class than the other.
+
+```{r}
+# Combine features and label
+rf_train_data <- cbind(x_train, Risk = y_train)
+
+# Random forest training with caret
+set.seed(123)
+rf_model <- train(
+  Risk ~ .,
+  data = rf_train_data,
+  method = "rf",
+  metric = "ROC",
+  trControl = control,
+  tuneLength = 5
+)
+```
+
+
+The model is created by default in the tuneLength=5, ensuring that mtry changes each time. Thanks to these two points, the model users will discover it is both stable and adaptable to different situations.
+
+```{r}
+rf_probs <- predict(rf_model, x_test, type = "prob")[, 2]
+rf_preds <- ifelse(rf_probs > 0.5, levels_y[2], levels_y[1])
+rf_preds <- factor(rf_preds, levels = levels_y)
+confusionMatrix(data = rf_preds, reference = y_test)
+```
+In trials using test data, the Random Forest algorithm reaches a level of accuracy of 71.5%, which is slightly above the No Information Rate of 70.5%. Although it shows a slight better result, the probability value reveals that the difference between the naive baseline and the new data isn’t meaningful.
+
+| Metric                              | Value  | Interpretation                                                          |
+| ----------------------------------- | ------ | ----------------------------------------------------------------------- |
+| **Sensitivity**                     | 84.40% | Which customers have important risks (positive class).              |
+| **Specificity**                     | 40.68% | Correctly recognizes those who are in low risk.                                |
+| **Balanced Accuracy**               | 62.54% | Achieved when using the average of sensitivity and specificity.                                 |
+| **Kappa**                           | 0.2679 | The agreement is beyond the expected by chance, yet is not as strong as logistic regression. |
+| **Positive Predictive Value (PPV)** | 77.27% | Out of all the cases predicted to have high risk, 77.27% have been found to be truly high risk.               |
+| **Negative Predictive Value (NPV)** | 52.17% |There is a chance that an event which is predicted to be “Negative” is truly low-risk.                |
+
+
+From the results shown in the confusion matrix:
+
+    - 119 high-risk applicants were picked as predicted by the model.
+    - 35 applicants were wrongly marked as high-risk, but really were low-risk.
+    - 22 cases in which people who had a high risk of fraud were wrongly 
+    labeled as having a low risk.
+
+In this case, a true negative shows that a low-risk applicant was correctly identified.Since missing a risky applicant is more expensive for financial services, heightened sensitivity is a better choice than stricter decision-making.
+
+
+### ROC Cross-Validation
+
+In the process of 10-fold cross-validation, ROC showing stable predictions for the model. The Random Forest is trained on a different part of the training data with every fold and then its ROC curve and AUC score are determined by using it on the corresponding test subset.
+
+In this case, the main outcome is an average AUC of 0.76 that signifies:
+- With a high degree of certainty, the model can decide if an applicant is potentially high risk or low risk.
+- Because cross-validation covers multiple datasets, it suggests that the model does not overfit.
+
+In all the folds, the ROC curves climb above the diagonal line, confirming that the model acts well in different situations.
+
+```{r}
+rf_model_func <- function(x_train, y_train) {
+  df <- cbind(x_train, Risk = y_train)
+  colnames(df) <- make.names(colnames(df))
+  model <- randomForest::randomForest(Risk ~ ., data = df)
+  return(model)
+}
+
+plot_roc_cv_rf <- function(x, y, model_func, n_splits = 10) {
+  set.seed(123)
+  x <- x[, , drop = FALSE]
+  colnames(x) <- make.names(colnames(x))  # Important
+
+  folds <- caret::createFolds(y, k = n_splits)
+  all_roc_data <- list()
+
+  for (i in seq_along(folds)) {
+    test_idx <- folds[[i]]
+    train_idx <- setdiff(seq_along(y), test_idx)
+    test_y <- y[test_idx]
+
+    if (length(unique(test_y)) < 2) {
+      message(sprintf("fold", i))
+      next
+    }
+
+    model <- model_func(x[train_idx, ], y[train_idx])
+    prob_pred <- predict(model, x[test_idx, , drop = FALSE], type = "prob")[, 2]
+
+    roc_obj <- pROC::roc(
+      response = test_y,
+      predictor = prob_pred,
+      levels = levels(y),
+      direction = "<"
+    )
+
+    df <- data.frame(
+      fpr = 1 - roc_obj$specificities,
+      tpr = roc_obj$sensitivities,
+      fold = paste("Fold", i),
+      auc = rep(pROC::auc(roc_obj), length(roc_obj$sensitivities))
+    )
+
+    all_roc_data[[i]] <- df
+  }
+
+  roc_df <- dplyr::bind_rows(all_roc_data)
+  mean_auc <- mean(sapply(all_roc_data, function(df) unique(df$auc)))
+
+  ggplot(roc_df, aes(x = fpr, y = tpr, color = fold)) +
+    geom_line(alpha = 0.6, size = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    labs(
+      title = sprintf("10-Fold ROC (Random Forest, Mean AUC = %.2f)", mean_auc),
+      x = "False Positive Rate", y = "True Positive Rate"
+    ) +
+    theme_minimal()
+}
+
+plot_roc_cv_rf(x, y, rf_model_func)
+```
+
+# Conclusion
+
+Within the framework of this project, we have fully analyzed the German Credit Risk data, starting with exploration and visualization of the data and ending with clustering and predictive modelling.
+
+Our analysis started by performing a comprehensive Exploratory Data Analysis (EDA), in which univariate and bivariate analysis helped us to get insights on important variables that can influence the credit risk. Distribution visualizations and horizontal box plots were useful to spot outliers and patterns in the variables involving credit amount, housing and saving accounts. Such patterns formed a good basis of subsequent modeling steps.
+
+After EDA, we standardized and normalized numerical features to make the dataset ready to undertake machine learning processes. Clustering methods were used by us to investigate latent data groupings that offered unsupervised interpretations of risk patterns.
+
+During the predictive modeling part of the work, we have tested three classifiers: XGBoost, Logistic Regression, and Random Forest. Cross-validation was applied in training and validation of each model. The discriminatory ability of each model was determined by ROC curves. XGBoost was the best in predictive performance followed by Random Forest and Logistic Regression.
+
+Accuracy, sensitivity, specificity and Area Under the Curve (AUC) were further measured on each model. Such measures ensured that models were useful in differentiating high-risk and low-risk clients, and AUC scores backed up the reliability of these models.
+
+
+## Future Work
+Even though the present models are effective, the following aspects may be developed in the future:
+
+- Feature Engineering: Better model performance could be achieved by generating interaction terms or more sensible categorical groupings.
+
+- Model Explainability: SHAP or LIME are toolsets that may be helpful in explaining model predictions and thus input feature importance to decisions.
+
+- Dealing with Class Imbalance: Any imbalance between the classes of credit risks could be handled by exploring such methods as SMOTE or ensemble resampling.
+
+- Deployment: A real-time risk prediction web application would be a straightforward application to deploy, which may make this analysis practically usable.
+
+- Additional Unsupervised Learning: Dimensionality reduction (e.g., PCA or t-SNE) tested together with clustering might give more detailed visualization.
+
+The project provides a substantive basis of risk analysis and predictive modelling on credit scoring systems. It has the potential to become a powerful tool in the financial institutions with some more refinements.
