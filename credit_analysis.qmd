@@ -57,7 +57,7 @@ During the initial stage, we get to know the data structure, identify if they ar
 options(warn = -1)
 # Charger le fichier CSV dans un dataframe
 library(readr)
-df <- read_csv("german_credit_data.csv")
+df <- read_csv("C:/Users/Alain/Downloads/german_credit_data (1).csv")
 head(df)
 ```
 
